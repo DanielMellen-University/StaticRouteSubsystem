@@ -44,6 +44,12 @@ The program:
 The source IP is not on the same subnet as the incoming interface.
 ```
 
+If the source is on the subnet but is not a usable host gateway address, the program prints this exact message and exits:
+
+```text
+The source IP is not a usable gateway address.
+```
+
 7. Reconciles persistent routes through the packet source address:
 
 ```text
@@ -51,7 +57,7 @@ DEST1_SUBNET/DEST1_PREFIX_LENGTH
 DEST2_SUBNET/DEST2_PREFIX_LENGTH
 ```
 
-The two configured destination prefixes are managed by this program. Existing static routes for either prefix are removed from the active and persistent route stores on all interfaces before the routes are recreated. If creating the new routes fails, any partially created set is removed.
+The two configured destination prefixes are managed by this program. Existing NetMgmt (manually managed) static routes for either prefix are removed from the active and persistent route stores on all interfaces before the routes are recreated. Routes with other protocols are left alone. If creating the new routes fails, any partially created set is removed.
 
 8. Restarts multicast listening when the adapter identity, interface index, DHCP address, or prefix changes. It waits for a preferred DHCP IPv4 address if the selected adapter temporarily loses one.
 
