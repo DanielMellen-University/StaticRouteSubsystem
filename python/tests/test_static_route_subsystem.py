@@ -1,5 +1,7 @@
 import contextlib
+import ctypes
 import io
+import socket
 import unittest
 from dataclasses import replace
 from unittest import mock
@@ -134,6 +136,49 @@ class AdapterStateTests(unittest.TestCase):
                 mock.patch.object(srs.time, "sleep") as sleep, contextlib.redirect_stdout(io.StringIO()):
             self.assertIs(srs.wait_for_dhcp_ipv4_change(self.adapter), changed)
         self.assertEqual(sleep.call_count, 3)
+
+
+class UnicastAddressTests(unittest.TestCase):
+    def make_unicast_chain(self, cases):
+        items = (srs.IP_ADAPTER_UNICAST_ADDRESS * len(cases))()
+        buffers = []
+        for index, (raw_ip, family, prefix, origin, dad_state) in enumerate(cases):
+            sockaddr = ctypes.create_string_buffer(family.to_bytes(2, "little") + b"\x00\x00" + raw_ip)
+            buffers.append(sockaddr)
+            items[index].Address = srs.SOCKET_ADDRESS(ctypes.addressof(sockaddr), len(sockaddr) - 1)
+            items[index].OnLinkPrefixLength = prefix
+            items[index].PrefixOrigin = origin
+            items[index].DadState = dad_state
+            if index + 1 < len(cases):
+                items[index].Next = ctypes.pointer(items[index + 1])
+        return items, buffers
+
+    def test_reads_first_eligible_dhcp_preferred_ipv4_address(self):
+        invalid = (
+            (socket.inet_aton("192.0.2.3"), srs.AF_INET, 24, 1, srs.IP_DAD_STATE_PREFERRED),
+            (socket.inet_aton("192.0.2.4"), srs.AF_INET, 24, srs.IP_PREFIX_ORIGIN_DHCP, 3),
+            (socket.inet_aton("0.0.0.0"), srs.AF_INET, 24, srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+            (socket.inet_aton("192.0.2.5"), 23, 24, srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+            (socket.inet_aton("192.0.2.6"), srs.AF_INET, 0, srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+            (socket.inet_aton("192.0.2.7"), srs.AF_INET, 33, srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+        )
+        valid = (socket.inet_aton("192.0.2.8"), srs.AF_INET, 25,
+                 srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED)
+        items, buffers = self.make_unicast_chain(invalid + (valid,))
+        self.assertEqual(
+            srs.read_ipv4_from_unicast(ctypes.pointer(items[0])),
+            (True, "192.0.2.8", 0xC0000208, 25),
+        )
+        self.assertEqual(len(buffers), len(invalid) + 1)
+
+    def test_empty_or_ineligible_unicast_list_has_no_address(self):
+        items, buffers = self.make_unicast_chain((
+            (socket.inet_aton("192.0.2.8"), srs.AF_INET, 24,
+             srs.IP_PREFIX_ORIGIN_DHCP, 3),
+        ))
+        self.assertEqual(srs.read_ipv4_from_unicast(ctypes.pointer(items[0])), (False, "", 0, 0))
+        self.assertEqual(srs.read_ipv4_from_unicast(srs.IP_ADAPTER_UNICAST_ADDRESS_PTR()), (False, "", 0, 0))
+        self.assertEqual(len(buffers), 1)
 
 
 if __name__ == "__main__":
