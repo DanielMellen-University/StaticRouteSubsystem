@@ -1,4 +1,8 @@
+import contextlib
+import io
 import unittest
+from dataclasses import replace
+from unittest import mock
 
 import static_route_subsystem as srs
 
@@ -83,6 +87,53 @@ class PortableHelperTests(unittest.TestCase):
             with self.subTest(subnet=subnet, mask=mask):
                 with self.assertRaisesRegex(RuntimeError, "Invalid configured route"):
                     srs._route_prefix(subnet, mask)
+
+
+class AdapterStateTests(unittest.TestCase):
+    def setUp(self):
+        self.adapter = srs.AdapterInfo("adapter", 3, 24, True, "192.0.2.10", 0xC000020A, "Ethernet")
+
+    def test_adapter_state_tracks_route_relevant_fields(self):
+        self.assertTrue(srs.same_adapter_state(self.adapter, replace(self.adapter)))
+        self.assertTrue(srs.same_adapter_state(self.adapter, replace(self.adapter, friendly_name="Renamed")))
+        changes = (
+            {"adapter_name": "other"},
+            {"if_index": 4},
+            {"has_ipv4": False},
+            {"ipv4_host": 0xC000020B},
+            {"prefix_length": 25},
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertFalse(srs.same_adapter_state(self.adapter, replace(self.adapter, **change)))
+        self.assertFalse(srs.same_adapter_state(None, self.adapter))
+        self.assertFalse(srs.same_adapter_state(self.adapter, None))
+
+    def test_refresh_selected_adapter_returns_same_or_carries_change(self):
+        with mock.patch.object(srs, "find_first_active_ethernet", return_value=self.adapter):
+            self.assertIs(srs._refresh_selected_adapter(self.adapter), self.adapter)
+
+        changed = replace(self.adapter, if_index=9)
+        for current in (changed, None):
+            with self.subTest(current=current):
+                with mock.patch.object(srs, "find_first_active_ethernet", return_value=current):
+                    with self.assertRaises(srs.AdapterStateChanged) as raised:
+                        srs._refresh_selected_adapter(self.adapter)
+                    self.assertIs(raised.exception.adapter, current)
+
+    def test_initial_wait_skips_missing_and_unaddressed_adapters(self):
+        no_address = replace(self.adapter, has_ipv4=False, ipv4_text="", ipv4_host=0, prefix_length=0)
+        with mock.patch.object(srs, "find_first_active_ethernet", side_effect=(None, no_address, self.adapter)), \
+                mock.patch.object(srs.time, "sleep") as sleep, contextlib.redirect_stdout(io.StringIO()):
+            self.assertIs(srs.wait_for_initial_dhcp_ipv4(), self.adapter)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_change_wait_returns_after_adapter_disappears_or_changes(self):
+        changed = replace(self.adapter, ipv4_host=0xC0000214, ipv4_text="192.0.2.20")
+        with mock.patch.object(srs, "find_first_active_ethernet", side_effect=(self.adapter, None, changed)), \
+                mock.patch.object(srs.time, "sleep") as sleep, contextlib.redirect_stdout(io.StringIO()):
+            self.assertIs(srs.wait_for_dhcp_ipv4_change(self.adapter), changed)
+        self.assertEqual(sleep.call_count, 3)
 
 
 if __name__ == "__main__":
