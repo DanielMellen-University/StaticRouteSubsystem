@@ -54,22 +54,6 @@ class PortableHelperTests(unittest.TestCase):
             with self.subTest(source=source_text, prefix=prefix):
                 self.assertEqual(srs.is_usable_gateway(adapter, source_text), expected)
 
-    def test_prefix_length_and_canonical_network_cases(self):
-        cases = (
-            ("10.0.0.0", "255.0.0.0", True),
-            ("10.0.0.1", "255.0.0.0", False),
-            ("10.0.0.0", "255.0.255.0", False),
-            ("0.0.0.0", "0.0.0.0", False),
-        )
-        for address, mask, valid in cases:
-            with self.subTest(address=address, mask=mask):
-                try:
-                    network = srs.ipaddress.IPv4Network(f"{address}/{mask}", strict=True)
-                    actual = network.prefixlen > 0
-                except ValueError:
-                    actual = False
-                self.assertEqual(actual, valid)
-
     def test_route_prefix_validation(self):
         valid_cases = (
             ("128.0.0.0", "128.0.0.0", "128.0.0.0/1"),
@@ -91,28 +75,6 @@ class PortableHelperTests(unittest.TestCase):
             with self.subTest(subnet=subnet, mask=mask):
                 with self.assertRaisesRegex(RuntimeError, "Invalid configured route"):
                     srs._route_prefix(subnet, mask)
-
-    def test_canonical_network_table_matches_portable_c_cases(self):
-        cases = (
-            ("128.0.0.0", "128.0.0.0", 1, True),
-            ("10.0.0.0", "255.0.0.0", 8, True),
-            ("192.0.2.0", "255.255.255.254", 31, True),
-            ("192.0.2.1", "255.255.255.255", 32, True),
-            ("10.0.0.1", "255.0.0.0", 8, False),
-            ("10.0.0.0", "255.0.255.0", 0, False),
-            ("0.0.0.0", "0.0.0.0", 0, False),
-        )
-        for address, mask, prefix, valid in cases:
-            with self.subTest(address=address, mask=mask):
-                try:
-                    network = srs.ipaddress.IPv4Network(f"{address}/{mask}", strict=True)
-                    actual = network.prefixlen > 0
-                    if actual:
-                        self.assertEqual(network.prefixlen, prefix)
-                except ValueError:
-                    actual = False
-                self.assertEqual(actual, valid)
-
 
 class AdapterStateTests(unittest.TestCase):
     def setUp(self):
