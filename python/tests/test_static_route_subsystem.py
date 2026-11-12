@@ -316,5 +316,57 @@ class PacketInfoParsingTests(unittest.TestCase):
             srs._receive_packet_info(self.fake_socket(), failed_recvmsg, FakeWinsock(10022))
 
 
+class MulticastReceiveTests(unittest.TestCase):
+    def setUp(self):
+        self.adapter = srs.AdapterInfo("chosen", 12, 24, True, "192.0.2.10", 0xC000020A, "Ethernet")
+        self.sock = mock.MagicMock()
+        self.sock.__enter__.return_value = self.sock
+
+    def run_receive(self, packets, refresh_side_effect=None):
+        select_results = [([self.sock], [], []) for _ in packets]
+        with mock.patch.object(srs.socket, "socket", return_value=self.sock) as create_socket, \
+                mock.patch.object(srs, "_make_wsarecvmsg", return_value=(object(), object())), \
+                mock.patch.object(srs, "_receive_packet_info", side_effect=packets) as receive_packet, \
+                mock.patch.object(srs.select, "select", side_effect=select_results), \
+                mock.patch.object(srs, "_refresh_selected_adapter", side_effect=refresh_side_effect) as refresh, \
+                mock.patch.object(srs.time, "monotonic", return_value=1.0), \
+                contextlib.redirect_stdout(io.StringIO()):
+            result = srs.receive_multicast_source(self.adapter)
+        return result, create_socket, receive_packet, refresh
+
+    def test_ignores_other_group_and_interface_then_accepts_matching_packet(self):
+        result, create_socket, receive_packet, refresh = self.run_receive((
+            ("192.0.2.1", "239.255.0.2", 12),
+            ("192.0.2.2", "239.255.0.1", 99),
+            ("192.0.2.3", "239.255.0.1", 12),
+        ))
+        self.assertEqual(result, ("192.0.2.3", 0xC0000203))
+        create_socket.assert_called_once_with(srs.socket.AF_INET, srs.socket.SOCK_DGRAM, srs.socket.IPPROTO_UDP)
+        self.assertEqual(receive_packet.call_count, 3)
+        refresh.assert_called_once_with(self.adapter)
+        self.sock.bind.assert_called_once_with(("", srs.UDP_PORT))
+        self.sock.setsockopt.assert_any_call(srs.socket.IPPROTO_IP, srs.IP_PKTINFO, 1)
+        self.sock.setsockopt.assert_any_call(
+            srs.socket.IPPROTO_IP,
+            srs.socket.IP_ADD_MEMBERSHIP,
+            srs.socket.inet_aton(srs.MULTICAST_GROUP) + srs.socket.inet_aton(self.adapter.ipv4_text),
+        )
+        self.sock.setblocking.assert_called_once_with(False)
+
+    def test_refreshes_adapter_when_idle_and_propagates_changed_state(self):
+        changed = srs.AdapterStateChanged(None)
+        with mock.patch.object(srs.socket, "socket", return_value=self.sock), \
+                mock.patch.object(srs, "_make_wsarecvmsg", return_value=(object(), object())), \
+                mock.patch.object(srs.select, "select", side_effect=[([], [], []), ([self.sock], [], [])]), \
+                mock.patch.object(srs, "_receive_packet_info", return_value=("192.0.2.3", srs.MULTICAST_GROUP, 12)), \
+                mock.patch.object(srs, "_refresh_selected_adapter", side_effect=[self.adapter, changed]), \
+                mock.patch.object(srs.time, "monotonic", return_value=1.0), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(srs.AdapterStateChanged) as raised:
+                srs.receive_multicast_source(self.adapter)
+        self.assertIs(raised.exception, changed)
+        self.sock.__exit__.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
