@@ -61,6 +61,27 @@ class PortableHelperTests(unittest.TestCase):
                     actual = False
                 self.assertEqual(actual, valid)
 
+    def test_route_prefix_validation(self):
+        valid_cases = (
+            ("10.0.0.0", "255.0.0.0", "10.0.0.0/8"),
+            ("192.0.2.0", "255.255.255.254", "192.0.2.0/31"),
+            ("192.0.2.1", "255.255.255.255", "192.0.2.1/32"),
+        )
+        for subnet, mask, expected in valid_cases:
+            with self.subTest(subnet=subnet, mask=mask):
+                self.assertEqual(srs._route_prefix(subnet, mask), expected)
+
+        invalid_cases = (
+            ("10.0.0.1", "255.0.0.0"),
+            ("10.0.0.0", "255.0.255.0"),
+            ("0.0.0.0", "0.0.0.0"),
+            ("999.0.0.0", "255.0.0.0"),
+        )
+        for subnet, mask in invalid_cases:
+            with self.subTest(subnet=subnet, mask=mask):
+                with self.assertRaisesRegex(RuntimeError, "Invalid configured route"):
+                    srs._route_prefix(subnet, mask)
+
 
 if __name__ == "__main__":
     unittest.main()
