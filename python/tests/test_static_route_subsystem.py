@@ -247,5 +247,74 @@ class AdapterEnumerationTests(unittest.TestCase):
                 srs.get_adapters_addresses()
 
 
+class PacketInfoParsingTests(unittest.TestCase):
+    @staticmethod
+    def fake_socket():
+        sock = mock.Mock()
+        sock.fileno.return_value = 5
+        return sock
+
+    def receive_with_control(self, control_kind):
+        def recvmsg(fd, message_pointer, received_pointer, overlapped, completion):
+            message = ctypes.cast(message_pointer, ctypes.POINTER(srs.WSAMSG)).contents
+            sender = b"\x02\x00\x13\x88" + socket.inet_aton("192.0.2.19") + b"\x00" * 8
+            ctypes.memmove(message.name, sender, len(sender))
+            if control_kind == "absent":
+                message.Control.len = 0
+                return 0
+
+            header_size = ctypes.sizeof(srs.WSACMSGHDR)
+            alignment = ctypes.sizeof(ctypes.c_size_t)
+            data_offset = (header_size + alignment - 1) & ~(alignment - 1)
+            header = srs.WSACMSGHDR.from_address(message.Control.buf)
+            header.cmsg_level = socket.IPPROTO_IP
+            header.cmsg_type = srs.IP_PKTINFO
+            if control_kind == "too_short":
+                header.cmsg_len = header_size - 1
+                message.Control.len = header_size
+            elif control_kind == "truncated":
+                header.cmsg_len = header_size + 100
+                message.Control.len = header_size
+            elif control_kind == "other_type":
+                header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
+                header.cmsg_type = 99
+                message.Control.len = header.cmsg_len
+            else:
+                header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
+                info = srs.IN_PKTINFO.from_address(message.Control.buf + data_offset)
+                info.ipi_addr[:] = (239, 255, 0, 1)
+                info.ipi_ifindex = 12
+                message.Control.len = header.cmsg_len
+            return 0
+
+        return recvmsg
+
+    def test_parses_valid_packet_info(self):
+        packet = srs._receive_packet_info(self.fake_socket(), self.receive_with_control("valid"), object())
+        self.assertEqual(packet, ("192.0.2.19", "239.255.0.1", 12))
+
+    def test_ignores_absent_and_malformed_packet_info(self):
+        for control_kind in ("absent", "too_short", "truncated", "other_type"):
+            with self.subTest(control_kind=control_kind):
+                packet = srs._receive_packet_info(self.fake_socket(), self.receive_with_control(control_kind), object())
+                self.assertIsNone(packet)
+
+    def test_would_block_returns_none_and_other_errors_are_reported(self):
+        class FakeWinsock:
+            def __init__(self, error):
+                self.error = error
+
+            def WSAGetLastError(self):
+                return self.error
+
+        def failed_recvmsg(fd, message, received, overlapped, completion):
+            return srs.SOCKET_ERROR
+
+        self.assertIsNone(srs._receive_packet_info(
+            self.fake_socket(), failed_recvmsg, FakeWinsock(srs.WSAEWOULDBLOCK)))
+        with self.assertRaisesRegex(OSError, "WSARecvMsg failed with error 10022"):
+            srs._receive_packet_info(self.fake_socket(), failed_recvmsg, FakeWinsock(10022))
+
+
 if __name__ == "__main__":
     unittest.main()
