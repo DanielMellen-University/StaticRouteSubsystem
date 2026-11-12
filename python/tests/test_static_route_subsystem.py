@@ -412,10 +412,10 @@ class RouteReconcileTests(unittest.TestCase):
                     self.assertTrue(str(raised.exception).startswith("Persistent route reconciliation failed"))
                     self.assertIn(detail, str(raised.exception))
 
-    def test_process_start_failure_propagates_os_error_without_execution(self):
+    def test_process_start_failure_has_clear_context_without_execution(self):
         with mock.patch.object(srs, "_get_windows_directory", return_value=r"C:\Windows"), \
                 mock.patch.object(srs.subprocess, "run", side_effect=FileNotFoundError("missing powershell")):
-            with self.assertRaisesRegex(FileNotFoundError, "missing powershell"):
+            with self.assertRaisesRegex(RuntimeError, "Failed to start system PowerShell:.*missing powershell"):
                 srs.run_route_reconcile("192.0.2.1", 12)
 
 
