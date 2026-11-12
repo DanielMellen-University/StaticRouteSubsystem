@@ -36,6 +36,7 @@ static const GatewayCase gateway_cases[] = {
     {UINT32_C(0x0a000001), 8, UINT32_C(0x7f000001), 0},
     {UINT32_C(0x0a000001), 8, UINT32_C(0xe0000001), 0},
     {UINT32_C(0x0a000001), 8, UINT32_C(0x0a000002), 1},
+    {UINT32_C(0x0a000001), 0, UINT32_C(0x0a000002), 0},
     {UINT32_C(0x0a000001), 33, UINT32_C(0x0a000002), 0}
 };
 

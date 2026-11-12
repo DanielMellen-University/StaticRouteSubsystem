@@ -24,7 +24,7 @@ static int srs_same_subnet(uint32_t left_ip, uint32_t right_ip, unsigned prefix_
 static int srs_is_usable_gateway(uint32_t adapter_ip, unsigned prefix_length, uint32_t source_ip) {
     uint32_t first_octet = source_ip >> 24;
 
-    if (prefix_length > 32 || source_ip == 0 || source_ip == adapter_ip ||
+    if (prefix_length == 0 || prefix_length > 32 || source_ip == 0 || source_ip == adapter_ip ||
         first_octet == 0 || first_octet == 127 || first_octet >= 224) {
         return 0;
     }

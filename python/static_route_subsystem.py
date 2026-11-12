@@ -163,6 +163,8 @@ def same_subnet(left_ip, right_ip, prefix_length):
 
 def is_usable_gateway(adapter, source_ip_text):
     address = ipaddress.IPv4Address(source_ip_text)
+    if not 1 <= adapter.prefix_length <= 32:
+        return False
     if (
         address.is_unspecified
         or address.is_multicast

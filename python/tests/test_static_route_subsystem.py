@@ -24,6 +24,8 @@ class PortableHelperTests(unittest.TestCase):
         (0x0A000001, 8, 0x7F000001, False),
         (0x0A000001, 8, 0xE0000001, False),
         (0x0A000001, 8, 0x0A000002, True),
+        (0x0A000001, 0, 0x0A000002, False),
+        (0x0A000001, 33, 0x0A000002, False),
     )
 
     def test_prefix_and_subnet_cases(self):
