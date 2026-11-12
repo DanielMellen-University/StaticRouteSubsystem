@@ -181,5 +181,71 @@ class UnicastAddressTests(unittest.TestCase):
         self.assertEqual(len(buffers), 1)
 
 
+class AdapterEnumerationTests(unittest.TestCase):
+    def make_adapter_chain(self, records):
+        adapters = (srs.IP_ADAPTER_ADDRESSES * len(records))()
+        for index, record in enumerate(records):
+            adapters[index].IfIndex = record.get("if_index", index + 1)
+            adapters[index].AdapterName = record.get("name", f"adapter-{index}".encode("ascii"))
+            adapters[index].FriendlyName = record.get("friendly_name", f"Ethernet {index}")
+            adapters[index].PhysicalAddressLength = record.get("physical_length", 6)
+            adapters[index].Flags = record.get("flags", srs.IP_ADAPTER_DHCP_ENABLED)
+            adapters[index].IfType = record.get("if_type", srs.IF_TYPE_ETHERNET_CSMACD)
+            adapters[index].OperStatus = record.get("status", srs.IF_OPER_STATUS_UP)
+            if index + 1 < len(records):
+                adapters[index].Next = ctypes.pointer(adapters[index + 1])
+        return adapters
+
+    def test_selects_first_adapter_that_passes_all_filters(self):
+        adapters = self.make_adapter_chain((
+            {"status": 2},
+            {"if_type": 24},
+            {"physical_length": 0},
+            {"flags": 0},
+            {"if_index": 88, "name": b"chosen", "friendly_name": "Chosen adapter"},
+            {"if_index": 99, "name": b"later"},
+        ))
+        with mock.patch.object(srs, "get_adapters_addresses", return_value=(object(), ctypes.pointer(adapters[0]))):
+            actual = srs.find_first_active_ethernet()
+        self.assertEqual(actual, srs.AdapterInfo("chosen", 88, 0, False, "", 0, "Chosen adapter"))
+
+    def test_empty_adapter_list_returns_none(self):
+        with mock.patch.object(srs, "get_adapters_addresses", return_value=(object(), srs.IP_ADAPTER_ADDRESSES_PTR())):
+            self.assertIsNone(srs.find_first_active_ethernet())
+
+    def test_address_query_retries_buffer_overflow_and_returns_buffer(self):
+        calls = []
+
+        class FakeFunction:
+            def __call__(self, family, flags, reserved, addresses, size_pointer):
+                size = ctypes.cast(size_pointer, ctypes.POINTER(ctypes.c_ulong)).contents
+                calls.append((family, flags, size.value))
+                if len(calls) == 1:
+                    size.value = 30000
+                    return srs.ERROR_BUFFER_OVERFLOW
+                return srs.NO_ERROR
+
+        class FakeLibrary:
+            GetAdaptersAddresses = FakeFunction()
+
+        with mock.patch.object(srs.ctypes, "WinDLL", return_value=FakeLibrary(), create=True):
+            buffer, addresses = srs.get_adapters_addresses()
+        self.assertEqual([call[2] for call in calls], [15000, 30000])
+        self.assertEqual(len(buffer), 30000)
+        self.assertTrue(bool(addresses))
+
+    def test_address_query_reports_api_error(self):
+        class FakeFunction:
+            def __call__(self, family, flags, reserved, addresses, size_pointer):
+                return 5
+
+        class FakeLibrary:
+            GetAdaptersAddresses = FakeFunction()
+
+        with mock.patch.object(srs.ctypes, "WinDLL", return_value=FakeLibrary(), create=True):
+            with self.assertRaisesRegex(OSError, "GetAdaptersAddresses failed with error 5"):
+                srs.get_adapters_addresses()
+
+
 if __name__ == "__main__":
     unittest.main()
