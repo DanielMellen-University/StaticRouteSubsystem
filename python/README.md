@@ -27,6 +27,16 @@ py static_route_subsystem.py
 
 The Python program uses only the Python standard library. Windows PowerShell and NetTCPIP are supplied by Windows 11.
 
+## Offline tests
+
+From this folder, run:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+The suite uses only the standard library. Windows-dependent behavior is tested with mocks, so these tests do not require Windows or execute PowerShell.
+
 ## Behavior
 
 The program:
