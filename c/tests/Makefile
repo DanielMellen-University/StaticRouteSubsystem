@@ -13,5 +13,5 @@ $(TEST_BIN): test_helpers.c ../srs_helpers.h
 	$(CC) $(CFLAGS) -I.. test_helpers.c -o $(TEST_BIN)
 
 clean:
-	rmdir $(BUILD_DIR) 2>/dev/null || true
 	rm -f $(TEST_BIN)
+	rm -rf $(BUILD_DIR)
