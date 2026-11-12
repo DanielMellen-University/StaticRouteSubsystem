@@ -1,4 +1,4 @@
-CC ?= gcc
+CC = gcc
 CFLAGS ?= -std=c99 -Wall -Wextra -Werror
 BUILD_DIR := build
 TEST_BIN := $(BUILD_DIR)/test_helpers
