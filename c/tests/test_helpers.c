@@ -25,6 +25,23 @@ typedef struct GatewayCase {
     int expected;
 } GatewayCase;
 
+typedef struct NetworkCase {
+    uint32_t network;
+    uint32_t mask;
+    unsigned prefix;
+    int valid;
+} NetworkCase;
+
+static const NetworkCase network_cases[] = {
+    {UINT32_C(0x80000000), UINT32_C(0x80000000), 1, 1},
+    {UINT32_C(0x0a000000), UINT32_C(0xff000000), 8, 1},
+    {UINT32_C(0xc0000200), UINT32_C(0xfffffffe), 31, 1},
+    {UINT32_C(0xc0000201), UINT32_C(0xffffffff), 32, 1},
+    {UINT32_C(0x0a000001), UINT32_C(0xff000000), 8, 0},
+    {UINT32_C(0x0a000000), UINT32_C(0xff00ff00), 0, 0},
+    {UINT32_C(0x00000000), UINT32_C(0x00000000), 0, 0}
+};
+
 static const GatewayCase gateway_cases[] = {
     {UINT32_C(0xc0a8010a), 24, UINT32_C(0xc0a80114), 1},
     {UINT32_C(0xc0a8010a), 24, UINT32_C(0xc0a80100), 0},
@@ -62,9 +79,16 @@ int main(void) {
                                      gateway_cases[i].source_ip) == gateway_cases[i].expected);
     }
 
-    assert(srs_is_canonical_network(UINT32_C(0x0a000000), UINT32_C(0xff000000)));
-    assert(!srs_is_canonical_network(UINT32_C(0x0a000001), UINT32_C(0xff000000)));
-    assert(!srs_is_canonical_network(UINT32_C(0x0a000000), UINT32_C(0xff00ff00)));
-    assert(!srs_is_canonical_network(UINT32_C(0), UINT32_C(0)));
+    for (size_t i = 0; i < sizeof(network_cases) / sizeof(network_cases[0]); ++i) {
+        unsigned prefix = 0;
+        int mask_valid = srs_prefix_length_from_mask(network_cases[i].mask, &prefix);
+        assert(mask_valid == (network_cases[i].prefix != 0));
+        assert(srs_is_canonical_network(network_cases[i].network, network_cases[i].mask) ==
+               network_cases[i].valid);
+        if (network_cases[i].valid) {
+            assert(prefix == network_cases[i].prefix);
+        }
+    }
+
     return 0;
 }
