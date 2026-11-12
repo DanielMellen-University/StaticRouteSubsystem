@@ -1,4 +1,5 @@
 import contextlib
+import base64
 import ctypes
 import io
 import socket
@@ -366,6 +367,56 @@ class MulticastReceiveTests(unittest.TestCase):
                 srs.receive_multicast_source(self.adapter)
         self.assertIs(raised.exception, changed)
         self.sock.__exit__.assert_called_once()
+
+
+class RouteReconcileTests(unittest.TestCase):
+    def run_reconcile(self, result):
+        with mock.patch.object(srs, "_get_windows_directory", return_value=r"C:\Windows"), \
+                mock.patch.object(srs.subprocess, "run", return_value=result) as run:
+            srs.run_route_reconcile("192.0.2.1", 12)
+        return run
+
+    def test_builds_encoded_command_without_running_powershell(self):
+        run = self.run_reconcile(srs.subprocess.CompletedProcess([], 0, "", ""))
+        args = run.call_args.args[0]
+        self.assertEqual(args[0], srs.os.path.join(
+            r"C:\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
+        self.assertEqual(args[1:5], ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        self.assertEqual(run.call_args.kwargs, {"check": False, "capture_output": True, "text": True})
+        script = base64.b64decode(args[5]).decode("utf-16le")
+        for expected in (
+            "$managedPrefixes = @('10.10.0.0/24', '10.20.0.0/24')",
+            "[string]$_.Protocol -eq 'NetMgmt'",
+            "Remove-ManagedRoutes 'ActiveStore'",
+            "Remove-ManagedRoutes 'PersistentStore'",
+            "route.exe",
+            "'10.10.0.0' mask '255.255.255.0' '192.0.2.1' if 12",
+            "'10.20.0.0' mask '255.255.255.0' '192.0.2.1' if 12",
+            "PersistentStore",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, script)
+
+    def test_failure_reports_stderr_then_stdout_or_exit_status(self):
+        errors = (
+            (srs.subprocess.CompletedProcess([], 1, "stdout detail", "stderr detail"), "stderr detail"),
+            (srs.subprocess.CompletedProcess([], 2, "stdout detail", ""), "stdout detail"),
+            (srs.subprocess.CompletedProcess([], 7, "", ""), "exit code 7"),
+        )
+        for result, detail in errors:
+            with self.subTest(detail=detail):
+                with mock.patch.object(srs, "_get_windows_directory", return_value=r"C:\Windows"), \
+                        mock.patch.object(srs.subprocess, "run", return_value=result):
+                    with self.assertRaises(RuntimeError) as raised:
+                        srs.run_route_reconcile("192.0.2.1", 12)
+                    self.assertTrue(str(raised.exception).startswith("Persistent route reconciliation failed"))
+                    self.assertIn(detail, str(raised.exception))
+
+    def test_process_start_failure_propagates_os_error_without_execution(self):
+        with mock.patch.object(srs, "_get_windows_directory", return_value=r"C:\Windows"), \
+                mock.patch.object(srs.subprocess, "run", side_effect=FileNotFoundError("missing powershell")):
+            with self.assertRaisesRegex(FileNotFoundError, "missing powershell"):
+                srs.run_route_reconcile("192.0.2.1", 12)
 
 
 if __name__ == "__main__":
