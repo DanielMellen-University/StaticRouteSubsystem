@@ -419,5 +419,33 @@ class RouteReconcileTests(unittest.TestCase):
                 srs.run_route_reconcile("192.0.2.1", 12)
 
 
+class MainEntryPointTests(unittest.TestCase):
+    def setUp(self):
+        self.adapter = srs.AdapterInfo("chosen", 12, 24, True, "192.0.2.10", 0xC000020A, "Ethernet")
+
+    def test_documented_packet_source_messages_remain_exact(self):
+        cases = (
+            ("192.0.3.1", 0xC0000301,
+             "The source IP is not on the same subnet as the incoming interface.\n"),
+            ("192.0.2.0", 0xC0000200,
+             "The source IP is not a usable gateway address.\n"),
+        )
+        for source_text, source_host, expected_output in cases:
+            with self.subTest(source=source_text):
+                output = io.StringIO()
+                with mock.patch.object(srs.sys, "platform", "win32"), \
+                        mock.patch.object(srs, "wait_for_initial_dhcp_ipv4", return_value=self.adapter), \
+                        mock.patch.object(srs, "receive_multicast_source", return_value=(source_text, source_host)), \
+                        contextlib.redirect_stdout(output):
+                    self.assertEqual(srs.main(), 1)
+                self.assertEqual(output.getvalue(), expected_output)
+
+    def test_non_windows_exit_message_and_status(self):
+        output = io.StringIO()
+        with mock.patch.object(srs.sys, "platform", "linux"), contextlib.redirect_stderr(output):
+            self.assertEqual(srs.main(), 1)
+        self.assertEqual(output.getvalue(), "This program must be run on Windows 11.\n")
+
+
 if __name__ == "__main__":
     unittest.main()
