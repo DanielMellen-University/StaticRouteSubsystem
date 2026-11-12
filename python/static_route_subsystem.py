@@ -163,6 +163,8 @@ def same_subnet(left_ip, right_ip, prefix_length):
 
 def is_usable_gateway(adapter, source_ip_text):
     address = ipaddress.IPv4Address(source_ip_text)
+    if not 1 <= adapter.prefix_length <= 32:
+        return False
     if (
         address.is_unspecified
         or address.is_multicast
@@ -497,12 +499,15 @@ try {{
         "v1.0",
         "powershell.exe",
     )
-    result = subprocess.run(
-        [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_script],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"Failed to start system PowerShell: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         if detail:

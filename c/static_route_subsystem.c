@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <wchar.h>
 #include <string.h>
+#include "srs_helpers.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Iphlpapi.lib")
@@ -42,27 +43,6 @@ typedef struct AdapterInfo {
     char ipv4_text[INET_ADDRSTRLEN];
     WCHAR friendly_name[256];
 } AdapterInfo;
-
-static uint32_t prefix_to_mask(ULONG prefix_length) {
-    if (prefix_length > 32) {
-        return 0;
-    }
-    if (prefix_length == 0) {
-        return 0;
-    }
-    if (prefix_length == 32) {
-        return 0xffffffffu;
-    }
-    return 0xffffffffu << (32 - prefix_length);
-}
-
-static int same_subnet(uint32_t left_ip, uint32_t right_ip, ULONG prefix_length) {
-    if (prefix_length > 32) {
-        return 0;
-    }
-    uint32_t mask = prefix_to_mask(prefix_length);
-    return (left_ip & mask) == (right_ip & mask);
-}
 
 static int get_ipv4_from_unicast(IP_ADAPTER_UNICAST_ADDRESS *unicast, AdapterInfo *info) {
     info->has_ipv4 = 0;
@@ -414,53 +394,26 @@ static int receive_multicast_source(const AdapterInfo *adapter, AdapterInfo *cha
 static int destination_prefix(const char *destination, const char *mask, char *prefix, size_t prefix_size) {
     IN_ADDR destination_address;
     IN_ADDR mask_address;
-    uint32_t mask_host;
     uint32_t destination_host;
-    ULONG prefix_length = 0;
-    int saw_zero = 0;
+    unsigned prefix_length;
 
     if (InetPtonA(AF_INET, destination, &destination_address) != 1 ||
         InetPtonA(AF_INET, mask, &mask_address) != 1) {
         return 0;
     }
 
-    mask_host = ntohl(mask_address.S_un.S_addr);
+    uint32_t mask_host = ntohl(mask_address.S_un.S_addr);
     destination_host = ntohl(destination_address.S_un.S_addr);
-    for (int bit = 31; bit >= 0; --bit) {
-        if ((mask_host & (1u << bit)) != 0) {
-            if (saw_zero) {
-                return 0;
-            }
-            ++prefix_length;
-        } else {
-            saw_zero = 1;
-        }
-    }
-    if (prefix_length == 0 || (destination_host & mask_host) != destination_host) {
+    if (!srs_prefix_length_from_mask(mask_host, &prefix_length) ||
+        !srs_is_canonical_network(destination_host, mask_host)) {
         return 0;
     }
 
-    return snprintf(prefix, prefix_size, "%s/%lu", destination, prefix_length) > 0;
+    return snprintf(prefix, prefix_size, "%s/%u", destination, prefix_length) > 0;
 }
 
 static int is_usable_gateway(const AdapterInfo *adapter, uint32_t source_ip_host) {
-    uint32_t first_octet = source_ip_host >> 24;
-    uint32_t host_mask;
-    uint32_t host_part;
-
-    if (source_ip_host == 0 || source_ip_host == adapter->ipv4_host ||
-        first_octet == 0 || first_octet == 127 || first_octet >= 224) {
-        return 0;
-    }
-
-    if (adapter->prefix_length <= 30) {
-        host_mask = ~prefix_to_mask(adapter->prefix_length);
-        host_part = source_ip_host & host_mask;
-        if (host_part == 0 || host_part == host_mask) {
-            return 0;
-        }
-    }
-    return 1;
+    return srs_is_usable_gateway(adapter->ipv4_host, adapter->prefix_length, source_ip_host);
 }
 
 static int run_route_reconcile(const char *gateway, ULONG if_index) {
@@ -638,7 +591,7 @@ int main(void) {
             continue;
         }
 
-        if (!same_subnet(adapter.ipv4_host, source_ip_host, adapter.prefix_length)) {
+        if (!srs_same_subnet(adapter.ipv4_host, source_ip_host, adapter.prefix_length)) {
             printf("The source IP is not on the same subnet as the incoming interface.\n");
             WSACleanup();
             return 1;

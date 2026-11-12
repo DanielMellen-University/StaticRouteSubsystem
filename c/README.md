@@ -63,6 +63,16 @@ The two configured destination prefixes are managed by this program. Existing Ne
 
 The route manager uses the Windows PowerShell NetTCPIP module. It locates PowerShell under the Windows system directory and does not search the working directory or `PATH` for the executable.
 
+## Portable helper tests
+
+From this folder, run the standard C helper tests with GCC:
+
+```sh
+make -C tests test
+```
+
+These tests cover only the platform-independent prefix, subnet, gateway, and route-prefix helpers. They do not compile or exercise the Windows application. Build the full program with the MSVC command above on Windows.
+
 ## Security assumption
 
 The sender is not authenticated. Any host that can send to the configured multicast group on the trusted Ethernet network can influence the route gateway. Use the listener only on a network where multicast senders are trusted.
