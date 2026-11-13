@@ -2,10 +2,14 @@ import contextlib
 import base64
 import ctypes
 import io
+from pathlib import Path
 import socket
+import sys
 import unittest
 from dataclasses import replace
 from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import static_route_subsystem as srs
 
@@ -165,6 +169,24 @@ class UnicastAddressTests(unittest.TestCase):
         self.assertEqual(srs.read_ipv4_from_unicast(srs.IP_ADAPTER_UNICAST_ADDRESS_PTR()), (False, "", 0, 0))
         self.assertEqual(len(buffers), 1)
 
+    def test_skips_null_and_short_sockaddr_entries(self):
+        cases = (
+            (socket.inet_aton("192.0.2.1"), srs.AF_INET, 24,
+             srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+            (socket.inet_aton("192.0.2.2"), srs.AF_INET, 24,
+             srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+            (socket.inet_aton("192.0.2.3"), srs.AF_INET, 24,
+             srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+        )
+        items, buffers = self.make_unicast_chain(cases)
+        items[0].Address.lpSockaddr = None
+        items[1].Address.iSockaddrLength = 7
+        self.assertEqual(
+            srs.read_ipv4_from_unicast(ctypes.pointer(items[0])),
+            (True, "192.0.2.3", 0xC0000203, 24),
+        )
+        self.assertEqual(len(buffers), 3)
+
 
 class AdapterEnumerationTests(unittest.TestCase):
     def make_adapter_chain(self, records):
@@ -197,6 +219,14 @@ class AdapterEnumerationTests(unittest.TestCase):
     def test_empty_adapter_list_returns_none(self):
         with mock.patch.object(srs, "get_adapters_addresses", return_value=(object(), srs.IP_ADAPTER_ADDRESSES_PTR())):
             self.assertIsNone(srs.find_first_active_ethernet())
+
+    def test_missing_adapter_names_become_empty_strings(self):
+        adapters = self.make_adapter_chain(({"name": b""},))
+        adapters[0].FriendlyName = None
+        with mock.patch.object(srs, "get_adapters_addresses", return_value=(object(), ctypes.pointer(adapters[0]))):
+            actual = srs.find_first_active_ethernet()
+        self.assertEqual(actual.adapter_name, "")
+        self.assertEqual(actual.friendly_name, "")
 
     def test_address_query_retries_buffer_overflow_and_returns_buffer(self):
         calls = []
@@ -264,6 +294,18 @@ class PacketInfoParsingTests(unittest.TestCase):
                 header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
                 header.cmsg_type = 99
                 message.Control.len = header.cmsg_len
+            elif control_kind == "unknown_then_valid":
+                header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
+                header.cmsg_type = 99
+                next_offset = (header.cmsg_len + alignment - 1) & ~(alignment - 1)
+                next_header = srs.WSACMSGHDR.from_address(message.Control.buf + next_offset)
+                next_header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
+                next_header.cmsg_level = socket.IPPROTO_IP
+                next_header.cmsg_type = srs.IP_PKTINFO
+                info = srs.IN_PKTINFO.from_address(message.Control.buf + next_offset + data_offset)
+                info.ipi_addr[:] = (239, 255, 0, 1)
+                info.ipi_ifindex = 12
+                message.Control.len = next_offset + next_header.cmsg_len
             else:
                 header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
                 info = srs.IN_PKTINFO.from_address(message.Control.buf + data_offset)
@@ -276,6 +318,11 @@ class PacketInfoParsingTests(unittest.TestCase):
 
     def test_parses_valid_packet_info(self):
         packet = srs._receive_packet_info(self.fake_socket(), self.receive_with_control("valid"), object())
+        self.assertEqual(packet, ("192.0.2.19", "239.255.0.1", 12))
+
+    def test_skips_unrelated_control_message_before_packet_info(self):
+        packet = srs._receive_packet_info(
+            self.fake_socket(), self.receive_with_control("unknown_then_valid"), object())
         self.assertEqual(packet, ("192.0.2.19", "239.255.0.1", 12))
 
     def test_ignores_absent_and_malformed_packet_info(self):
@@ -402,6 +449,36 @@ class RouteReconcileTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Failed to start system PowerShell:.*missing powershell"):
                 srs.run_route_reconcile("192.0.2.1", 12)
 
+    def test_windows_directory_query_rejects_failure_and_truncated_buffer(self):
+        class FakeKernel32:
+            def __init__(self, result):
+                class FakeFunction:
+                    def __init__(inner_self):
+                        inner_self.capacity = None
+
+                    def __call__(inner_self, buffer, capacity):
+                        inner_self.capacity = capacity
+                        return result
+
+                self.GetWindowsDirectoryW = FakeFunction()
+
+        for result in (0, 32768):
+            with self.subTest(result=result):
+                kernel32 = FakeKernel32(result)
+                with mock.patch.object(srs.ctypes, "windll", mock.Mock(kernel32=kernel32), create=True), \
+                        mock.patch.object(srs.ctypes, "get_last_error", return_value=5, create=True):
+                    with self.assertRaisesRegex(OSError, "GetWindowsDirectoryW failed with error 5"):
+                        srs._get_windows_directory()
+                self.assertEqual(kernel32.GetWindowsDirectoryW.capacity, 32768)
+
+    def test_invalid_gateway_is_rejected_before_windows_process_lookup(self):
+        with mock.patch.object(srs, "_get_windows_directory") as get_windows_directory, \
+                mock.patch.object(srs.subprocess, "run") as run:
+            with self.assertRaises(ValueError):
+                srs.run_route_reconcile("not an IPv4 address", 12)
+        get_windows_directory.assert_not_called()
+        run.assert_not_called()
+
 
 class MainEntryPointTests(unittest.TestCase):
     def setUp(self):
@@ -429,6 +506,48 @@ class MainEntryPointTests(unittest.TestCase):
         with mock.patch.object(srs.sys, "platform", "linux"), contextlib.redirect_stderr(output):
             self.assertEqual(srs.main(), 1)
         self.assertEqual(output.getvalue(), "This program must be run on Windows 11.\n")
+
+    def test_route_reconcile_failure_is_reported_and_returns_failure(self):
+        output = io.StringIO()
+        with mock.patch.object(srs.sys, "platform", "win32"), \
+                mock.patch.object(srs, "wait_for_initial_dhcp_ipv4", return_value=self.adapter), \
+                mock.patch.object(srs, "receive_multicast_source",
+                                  return_value=("192.0.2.20", 0xC0000214)), \
+                mock.patch.object(srs, "run_route_reconcile",
+                                  side_effect=RuntimeError("route command failed")), \
+                contextlib.redirect_stderr(output):
+            self.assertEqual(srs.main(), 1)
+        self.assertEqual(output.getvalue(), "route command failed\n")
+
+    def test_receive_oserror_is_reported_and_returns_failure(self):
+        output = io.StringIO()
+        with mock.patch.object(srs.sys, "platform", "win32"), \
+                mock.patch.object(srs, "wait_for_initial_dhcp_ipv4", return_value=self.adapter), \
+                mock.patch.object(srs, "receive_multicast_source",
+                                  side_effect=OSError("select failed with error 10022")), \
+                contextlib.redirect_stderr(output):
+            self.assertEqual(srs.main(), 1)
+        self.assertEqual(output.getvalue(), "select failed with error 10022\n")
+
+    def test_adapter_change_without_address_waits_for_dhcp_again(self):
+        unavailable = replace(self.adapter, has_ipv4=False, ipv4_text="", ipv4_host=0, prefix_length=0)
+        readdressed = replace(self.adapter, ipv4_text="192.0.2.11", ipv4_host=0xC000020B)
+        initial_wait = mock.Mock(side_effect=(self.adapter, readdressed))
+        receive = mock.Mock(side_effect=(
+            srs.AdapterStateChanged(unavailable),
+            ("192.0.2.20", 0xC0000214),
+        ))
+        output = io.StringIO()
+        with mock.patch.object(srs.sys, "platform", "win32"), \
+                mock.patch.object(srs, "wait_for_initial_dhcp_ipv4", initial_wait), \
+                mock.patch.object(srs, "receive_multicast_source", receive), \
+                mock.patch.object(srs, "run_route_reconcile",
+                                  side_effect=RuntimeError("stop after retry")), \
+                contextlib.redirect_stderr(output):
+            self.assertEqual(srs.main(), 1)
+        self.assertEqual(initial_wait.call_count, 2)
+        self.assertEqual(receive.call_args_list, [mock.call(self.adapter), mock.call(readdressed)])
+        self.assertEqual(output.getvalue(), "stop after retry\n")
 
 
 if __name__ == "__main__":
