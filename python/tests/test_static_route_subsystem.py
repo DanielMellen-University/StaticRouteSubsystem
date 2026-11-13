@@ -2,10 +2,14 @@ import contextlib
 import base64
 import ctypes
 import io
+from pathlib import Path
 import socket
+import sys
 import unittest
 from dataclasses import replace
 from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import static_route_subsystem as srs
 

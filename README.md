@@ -57,7 +57,7 @@ Each subnet and mask must describe an IPv4 prefix from /1 through /32. Default r
 
 ## Offline tests
 
-Run the Python unit tests from `python/` with `python3 -m unittest discover -s tests -v`.
+Run the Python unit tests from the repository root with `python3 -B -m unittest discover -s python/tests -v`.
 Run the portable C helper tests from the repository root with `make -C c/tests test`.
 The C tests cover only platform-independent helpers; build and run the full C program
 with MSVC on Windows.
