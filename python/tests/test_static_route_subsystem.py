@@ -477,6 +477,18 @@ class MainEntryPointTests(unittest.TestCase):
             self.assertEqual(srs.main(), 1)
         self.assertEqual(output.getvalue(), "This program must be run on Windows 11.\n")
 
+    def test_route_reconcile_failure_is_reported_and_returns_failure(self):
+        output = io.StringIO()
+        with mock.patch.object(srs.sys, "platform", "win32"), \
+                mock.patch.object(srs, "wait_for_initial_dhcp_ipv4", return_value=self.adapter), \
+                mock.patch.object(srs, "receive_multicast_source",
+                                  return_value=("192.0.2.20", 0xC0000214)), \
+                mock.patch.object(srs, "run_route_reconcile",
+                                  side_effect=RuntimeError("route command failed")), \
+                contextlib.redirect_stderr(output):
+            self.assertEqual(srs.main(), 1)
+        self.assertEqual(output.getvalue(), "route command failed\n")
+
 
 if __name__ == "__main__":
     unittest.main()
