@@ -73,6 +73,9 @@ int main(void) {
     assert(srs_same_subnet(left, same_24, 24));
     assert(!srs_same_subnet(left, other_24, 24));
     assert(srs_same_subnet(left, other_24, 16));
+    assert(srs_same_subnet(left, other_24, 0));
+    assert(srs_same_subnet(left, left, 32));
+    assert(!srs_same_subnet(left, same_24, 32));
 
     for (size_t i = 0; i < sizeof(gateway_cases) / sizeof(gateway_cases[0]); ++i) {
         assert(srs_is_usable_gateway(gateway_cases[i].adapter_ip, gateway_cases[i].prefix,
@@ -88,6 +91,12 @@ int main(void) {
         if (network_cases[i].valid) {
             assert(prefix == network_cases[i].prefix);
         }
+    }
+
+    {
+        unsigned prefix = 77;
+        assert(!srs_prefix_length_from_mask(UINT32_C(0xff00ff00), &prefix));
+        assert(prefix == 77);
     }
 
     return 0;
