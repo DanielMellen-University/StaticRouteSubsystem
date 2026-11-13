@@ -220,6 +220,14 @@ class AdapterEnumerationTests(unittest.TestCase):
         with mock.patch.object(srs, "get_adapters_addresses", return_value=(object(), srs.IP_ADAPTER_ADDRESSES_PTR())):
             self.assertIsNone(srs.find_first_active_ethernet())
 
+    def test_missing_adapter_names_become_empty_strings(self):
+        adapters = self.make_adapter_chain(({"name": b""},))
+        adapters[0].FriendlyName = None
+        with mock.patch.object(srs, "get_adapters_addresses", return_value=(object(), ctypes.pointer(adapters[0]))):
+            actual = srs.find_first_active_ethernet()
+        self.assertEqual(actual.adapter_name, "")
+        self.assertEqual(actual.friendly_name, "")
+
     def test_address_query_retries_buffer_overflow_and_returns_buffer(self):
         calls = []
 
