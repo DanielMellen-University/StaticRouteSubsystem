@@ -169,6 +169,24 @@ class UnicastAddressTests(unittest.TestCase):
         self.assertEqual(srs.read_ipv4_from_unicast(srs.IP_ADAPTER_UNICAST_ADDRESS_PTR()), (False, "", 0, 0))
         self.assertEqual(len(buffers), 1)
 
+    def test_skips_null_and_short_sockaddr_entries(self):
+        cases = (
+            (socket.inet_aton("192.0.2.1"), srs.AF_INET, 24,
+             srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+            (socket.inet_aton("192.0.2.2"), srs.AF_INET, 24,
+             srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+            (socket.inet_aton("192.0.2.3"), srs.AF_INET, 24,
+             srs.IP_PREFIX_ORIGIN_DHCP, srs.IP_DAD_STATE_PREFERRED),
+        )
+        items, buffers = self.make_unicast_chain(cases)
+        items[0].Address.lpSockaddr = None
+        items[1].Address.iSockaddrLength = 7
+        self.assertEqual(
+            srs.read_ipv4_from_unicast(ctypes.pointer(items[0])),
+            (True, "192.0.2.3", 0xC0000203, 24),
+        )
+        self.assertEqual(len(buffers), 3)
+
 
 class AdapterEnumerationTests(unittest.TestCase):
     def make_adapter_chain(self, records):
