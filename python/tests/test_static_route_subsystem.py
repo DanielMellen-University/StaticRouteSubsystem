@@ -294,6 +294,18 @@ class PacketInfoParsingTests(unittest.TestCase):
                 header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
                 header.cmsg_type = 99
                 message.Control.len = header.cmsg_len
+            elif control_kind == "unknown_then_valid":
+                header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
+                header.cmsg_type = 99
+                next_offset = (header.cmsg_len + alignment - 1) & ~(alignment - 1)
+                next_header = srs.WSACMSGHDR.from_address(message.Control.buf + next_offset)
+                next_header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
+                next_header.cmsg_level = socket.IPPROTO_IP
+                next_header.cmsg_type = srs.IP_PKTINFO
+                info = srs.IN_PKTINFO.from_address(message.Control.buf + next_offset + data_offset)
+                info.ipi_addr[:] = (239, 255, 0, 1)
+                info.ipi_ifindex = 12
+                message.Control.len = next_offset + next_header.cmsg_len
             else:
                 header.cmsg_len = data_offset + ctypes.sizeof(srs.IN_PKTINFO)
                 info = srs.IN_PKTINFO.from_address(message.Control.buf + data_offset)
@@ -306,6 +318,11 @@ class PacketInfoParsingTests(unittest.TestCase):
 
     def test_parses_valid_packet_info(self):
         packet = srs._receive_packet_info(self.fake_socket(), self.receive_with_control("valid"), object())
+        self.assertEqual(packet, ("192.0.2.19", "239.255.0.1", 12))
+
+    def test_skips_unrelated_control_message_before_packet_info(self):
+        packet = srs._receive_packet_info(
+            self.fake_socket(), self.receive_with_control("unknown_then_valid"), object())
         self.assertEqual(packet, ("192.0.2.19", "239.255.0.1", 12))
 
     def test_ignores_absent_and_malformed_packet_info(self):
