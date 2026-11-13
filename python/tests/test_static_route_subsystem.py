@@ -521,6 +521,26 @@ class MainEntryPointTests(unittest.TestCase):
             self.assertEqual(srs.main(), 1)
         self.assertEqual(output.getvalue(), "select failed with error 10022\n")
 
+    def test_adapter_change_without_address_waits_for_dhcp_again(self):
+        unavailable = replace(self.adapter, has_ipv4=False, ipv4_text="", ipv4_host=0, prefix_length=0)
+        readdressed = replace(self.adapter, ipv4_text="192.0.2.11", ipv4_host=0xC000020B)
+        initial_wait = mock.Mock(side_effect=(self.adapter, readdressed))
+        receive = mock.Mock(side_effect=(
+            srs.AdapterStateChanged(unavailable),
+            ("192.0.2.20", 0xC0000214),
+        ))
+        output = io.StringIO()
+        with mock.patch.object(srs.sys, "platform", "win32"), \
+                mock.patch.object(srs, "wait_for_initial_dhcp_ipv4", initial_wait), \
+                mock.patch.object(srs, "receive_multicast_source", receive), \
+                mock.patch.object(srs, "run_route_reconcile",
+                                  side_effect=RuntimeError("stop after retry")), \
+                contextlib.redirect_stderr(output):
+            self.assertEqual(srs.main(), 1)
+        self.assertEqual(initial_wait.call_count, 2)
+        self.assertEqual(receive.call_args_list, [mock.call(self.adapter), mock.call(readdressed)])
+        self.assertEqual(output.getvalue(), "stop after retry\n")
+
 
 if __name__ == "__main__":
     unittest.main()
