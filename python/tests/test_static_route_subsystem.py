@@ -489,6 +489,16 @@ class MainEntryPointTests(unittest.TestCase):
             self.assertEqual(srs.main(), 1)
         self.assertEqual(output.getvalue(), "route command failed\n")
 
+    def test_receive_oserror_is_reported_and_returns_failure(self):
+        output = io.StringIO()
+        with mock.patch.object(srs.sys, "platform", "win32"), \
+                mock.patch.object(srs, "wait_for_initial_dhcp_ipv4", return_value=self.adapter), \
+                mock.patch.object(srs, "receive_multicast_source",
+                                  side_effect=OSError("select failed with error 10022")), \
+                contextlib.redirect_stderr(output):
+            self.assertEqual(srs.main(), 1)
+        self.assertEqual(output.getvalue(), "select failed with error 10022\n")
+
 
 if __name__ == "__main__":
     unittest.main()
