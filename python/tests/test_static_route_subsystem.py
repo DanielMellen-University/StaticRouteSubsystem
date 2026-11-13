@@ -449,6 +449,28 @@ class RouteReconcileTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Failed to start system PowerShell:.*missing powershell"):
                 srs.run_route_reconcile("192.0.2.1", 12)
 
+    def test_windows_directory_query_rejects_failure_and_truncated_buffer(self):
+        class FakeKernel32:
+            def __init__(self, result):
+                class FakeFunction:
+                    def __init__(inner_self):
+                        inner_self.capacity = None
+
+                    def __call__(inner_self, buffer, capacity):
+                        inner_self.capacity = capacity
+                        return result
+
+                self.GetWindowsDirectoryW = FakeFunction()
+
+        for result in (0, 32768):
+            with self.subTest(result=result):
+                kernel32 = FakeKernel32(result)
+                with mock.patch.object(srs.ctypes, "windll", mock.Mock(kernel32=kernel32), create=True), \
+                        mock.patch.object(srs.ctypes, "get_last_error", return_value=5, create=True):
+                    with self.assertRaisesRegex(OSError, "GetWindowsDirectoryW failed with error 5"):
+                        srs._get_windows_directory()
+                self.assertEqual(kernel32.GetWindowsDirectoryW.capacity, 32768)
+
 
 class MainEntryPointTests(unittest.TestCase):
     def setUp(self):
