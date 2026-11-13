@@ -471,6 +471,14 @@ class RouteReconcileTests(unittest.TestCase):
                         srs._get_windows_directory()
                 self.assertEqual(kernel32.GetWindowsDirectoryW.capacity, 32768)
 
+    def test_invalid_gateway_is_rejected_before_windows_process_lookup(self):
+        with mock.patch.object(srs, "_get_windows_directory") as get_windows_directory, \
+                mock.patch.object(srs.subprocess, "run") as run:
+            with self.assertRaises(ValueError):
+                srs.run_route_reconcile("not an IPv4 address", 12)
+        get_windows_directory.assert_not_called()
+        run.assert_not_called()
+
 
 class MainEntryPointTests(unittest.TestCase):
     def setUp(self):
